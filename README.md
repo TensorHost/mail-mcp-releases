@@ -4,10 +4,31 @@ This public repository is the independent release channel for TensorHost's
 Mail-MCP installer. Installer code is public already; mailbox credentials are
 never stored here.
 
+## Install
+
+Copy the command for your assistant from this GitHub page, not from a portal
+page. The first install trusts this public GitHub repository and its immutable
+bootstrap commit. The verified bootstrap installs a local `update.py`; use that
+local verifier for later updates so a future portal-origin compromise cannot
+replace the update path.
+
+Claude Code:
+
+```bash
+(tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT && curl -fsSL https://raw.githubusercontent.com/TensorHost/mail-mcp-releases/453bc455dc5284895ad04e1c45024ef19571e910/bootstrap.py -o "$tmp" && python3 "$tmp" --target claude)
+```
+
+Gemini CLI:
+
+```bash
+(tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT && curl -fsSL https://raw.githubusercontent.com/TensorHost/mail-mcp-releases/453bc455dc5284895ad04e1c45024ef19571e910/bootstrap.py -o "$tmp" && python3 "$tmp" --target gemini)
+```
+
 `bootstrap.py` pins the operator-held root public key. It verifies the root-signed
 release-key delegation, the release-signed manifest, and the exact target
 installer before execution. It also stores the highest accepted release
-sequence locally and rejects rollback or same-sequence equivocation.
+sequence and trust-delegation version locally and rejects release rollback,
+delegation rollback, or same-sequence equivocation.
 
 The private portal repository publishes `current/` through a repository-scoped
 publisher credential. The operator-held root private key and online release private key must
