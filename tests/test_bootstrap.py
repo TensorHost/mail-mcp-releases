@@ -80,12 +80,13 @@ class BootstrapVerificationTests(unittest.TestCase):
 
     def test_accepts_exact_signed_target(self):
         root_id, delegation, delegation_sig, manifest, manifest_sig, installer = self._fixture()
-        parsed, digest = bootstrap.verify_release(
+        parsed, digest, delegation_version = bootstrap.verify_release(
             delegation, delegation_sig, manifest, manifest_sig, installer, "claude",
             root_public_key=self.root_public, root_key_id=root_id, now=NOW,
         )
         self.assertEqual(parsed["sequence"], 100)
         self.assertEqual(digest, hashlib.sha256(manifest).hexdigest())
+        self.assertEqual(delegation_version, 1)
 
     def test_rejects_tampered_installer(self):
         root_id, delegation, delegation_sig, manifest, manifest_sig, installer = self._fixture()
@@ -115,13 +116,15 @@ class BootstrapVerificationTests(unittest.TestCase):
             )
 
     def test_rejects_rollback_and_equivocation(self):
-        state = {"sequence": 101, "manifest_sha256": "f" * 64, "commit": "b" * 40}
+        state = {"sequence": 101, "delegation_version": 2, "manifest_sha256": "f" * 64, "commit": "b" * 40}
         manifest = {"sequence": 100}
         with self.assertRaisesRegex(bootstrap.VerificationError, "older"):
-            bootstrap._check_rollback(state, manifest, "e" * 64)
+            bootstrap._check_rollback(state, manifest, "e" * 64, 2)
         state["sequence"] = 100
         with self.assertRaisesRegex(bootstrap.VerificationError, "conflicting"):
-            bootstrap._check_rollback(state, manifest, "e" * 64)
+            bootstrap._check_rollback(state, manifest, "e" * 64, 2)
+        with self.assertRaisesRegex(bootstrap.VerificationError, "delegation"):
+            bootstrap._check_rollback(state, manifest, "f" * 64, 1)
 
 
 if __name__ == "__main__":

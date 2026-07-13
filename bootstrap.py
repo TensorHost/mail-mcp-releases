@@ -126,7 +126,7 @@ def verify_release(
     root_public_key: bytes = ROOT_PUBLIC_KEY,
     root_key_id: str = ROOT_KEY_ID,
     now: dt.datetime | None = None,
-) -> tuple[dict, str]:
+) -> tuple[dict, str, int]:
     now = now or dt.datetime.now(dt.timezone.utc)
     _verify_signature(root_public_key, delegation_raw, delegation_signature)
     delegation = _json_no_duplicates(delegation_raw)
@@ -187,7 +187,7 @@ def verify_release(
     digest = hashlib.sha256(installer).hexdigest()
     if len(installer) != entry["size"] or entry["sha256"] != digest:
         raise VerificationError("installer bytes do not match the signed manifest")
-    return manifest, hashlib.sha256(manifest_raw).hexdigest()
+    return manifest, hashlib.sha256(manifest_raw).hexdigest(), delegation["version"]
 
 
 def _download(relative: str, limit: int) -> bytes:
@@ -223,25 +223,34 @@ def _load_state(path: pathlib.Path) -> dict | None:
     if path.is_symlink() or not stat.S_ISREG(mode) or stat.S_IMODE(mode) != 0o600:
         raise VerificationError("trusted-release state must be a regular mode-0600 file")
     state = _json_no_duplicates(path.read_bytes())
-    _require_keys(state, {"commit", "manifest_sha256", "sequence"}, "trusted-release state")
+    _require_keys(state, {"commit", "delegation_version", "manifest_sha256", "sequence"}, "trusted-release state")
     if not isinstance(state["sequence"], int) or state["sequence"] < 1:
         raise VerificationError("trusted-release state is invalid")
+    if not isinstance(state["delegation_version"], int) or state["delegation_version"] < 1:
+        raise VerificationError("trusted-release delegation state is invalid")
     return state
 
 
-def _check_rollback(state: dict | None, manifest: dict, manifest_digest: str) -> None:
+def _check_rollback(state: dict | None, manifest: dict, manifest_digest: str, delegation_version: int) -> None:
     if state is None:
         return
+    if delegation_version < state["delegation_version"]:
+        raise VerificationError("refusing an older release-key delegation")
     if manifest["sequence"] < state["sequence"]:
         raise VerificationError("refusing to install an older signed release")
     if manifest["sequence"] == state["sequence"] and manifest_digest != state["manifest_sha256"]:
         raise VerificationError("refusing conflicting manifests for one release sequence")
 
 
-def _write_state(path: pathlib.Path, manifest: dict, manifest_digest: str) -> None:
+def _write_state(path: pathlib.Path, manifest: dict, manifest_digest: str, delegation_version: int) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = json.dumps(
-        {"commit": manifest["commit"], "manifest_sha256": manifest_digest, "sequence": manifest["sequence"]},
+        {
+            "commit": manifest["commit"],
+            "delegation_version": delegation_version,
+            "manifest_sha256": manifest_digest,
+            "sequence": manifest["sequence"],
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode() + b"\n"
@@ -250,6 +259,28 @@ def _write_state(path: pathlib.Path, manifest: dict, manifest_digest: str) -> No
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as stream:
             stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _install_updater(path: pathlib.Path) -> None:
+    source = pathlib.Path(__file__)
+    mode = source.lstat().st_mode
+    if source.is_symlink() or not stat.S_ISREG(mode):
+        raise VerificationError("bootstrap source must be a regular file")
+    body = source.read_bytes()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".update.", suffix=".py", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o700)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(body)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -275,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_raw = _download("current/manifest.json", MAX_METADATA_BYTES)
         manifest_signature = _download("current/manifest.sig", MAX_METADATA_BYTES)
         installer = _download(f"current/{EXPECTED_FILES[args.target]}", MAX_INSTALLER_BYTES)
-        manifest, manifest_digest = verify_release(
+        manifest, manifest_digest, delegation_version = verify_release(
             delegation_raw,
             delegation_signature,
             manifest_raw,
@@ -285,13 +316,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         state_path = _state_path()
         state = _load_state(state_path)
-        _check_rollback(state, manifest, manifest_digest)
+        _check_rollback(state, manifest, manifest_digest, delegation_version)
         if args.download_only:
             output = pathlib.Path(args.download_only)
             output.write_bytes(installer)
             output.chmod(0o700)
             print(f"Verified release {manifest['sequence']} and wrote {output}")
             return 0
+        updater_path = state_path.parent / "update.py"
+        _install_updater(updater_path)
         with tempfile.NamedTemporaryFile(prefix="tensorhost-mail-mcp-", suffix=".sh", delete=False) as stream:
             stream.write(installer)
             installer_path = pathlib.Path(stream.name)
@@ -302,8 +335,9 @@ def main(argv: list[str] | None = None) -> int:
                 return completed.returncode
         finally:
             installer_path.unlink(missing_ok=True)
-        _write_state(state_path, manifest, manifest_digest)
+        _write_state(state_path, manifest, manifest_digest, delegation_version)
         print(f"Verified TensorHost Mail-MCP release {manifest['sequence']} ({manifest['commit'][:12]}).")
+        print(f"Future updates: python3 {updater_path} --target {args.target}")
         return 0
     except VerificationError as exc:
         print(f"Mail-MCP verification failed: {exc}", file=sys.stderr)
