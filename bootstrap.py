@@ -264,7 +264,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=sorted(EXPECTED_FILES), default="claude")
     parser.add_argument("--download-only", metavar="PATH", help="verify and save instead of executing")
-    args, installer_args = parser.parse_known_args(argv)
+    parser.add_argument("installer_args", nargs=argparse.REMAINDER, help="arguments after -- are passed to the installer")
+    args = parser.parse_args(argv)
+    installer_args = args.installer_args
+    if installer_args[:1] == ["--"]:
+        installer_args = installer_args[1:]
     try:
         delegation_raw = _download("trust/delegation.json", MAX_METADATA_BYTES)
         delegation_signature = _download("trust/delegation.sig", MAX_METADATA_BYTES)
