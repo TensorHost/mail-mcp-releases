@@ -2,6 +2,7 @@ import datetime as dt
 import hashlib
 import json
 import pathlib
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -125,6 +126,12 @@ class BootstrapVerificationTests(unittest.TestCase):
             bootstrap._check_rollback(state, manifest, "e" * 64, 2)
         with self.assertRaisesRegex(bootstrap.VerificationError, "delegation"):
             bootstrap._check_rollback(state, manifest, "f" * 64, 1)
+
+    def test_installed_updater_is_exact_and_private_executable(self):
+        path = self.root / "installed" / "update.py"
+        bootstrap._install_updater(path)
+        self.assertEqual(path.read_bytes(), pathlib.Path(bootstrap.__file__).read_bytes())
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
 
 
 if __name__ == "__main__":
