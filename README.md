@@ -34,6 +34,10 @@ The private portal repository publishes `current/` through a repository-scoped
 publisher credential. The operator-held root private key and online release private key must
 never be committed to either repository.
 
+Every published installer is checked for literal mailbox credentials, mailbox
+addresses, credential-bearing SMTP URLs, and private-key material. GitHub secret
+scanning and push protection are also enabled on this public release channel.
+
 ## Verify without executing
 
 ```bash
