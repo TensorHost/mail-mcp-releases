@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Compile bootstrap
+        run: python3 -m py_compile bootstrap.py tests/test_bootstrap.py
+      - name: Run verifier tests
+        run: python3 -m unittest discover -s tests -v
